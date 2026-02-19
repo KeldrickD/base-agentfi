@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Base AgentFi
 
 Framework for building **autonomous AI DeFi agents** on **Base** using Coinbase's **Agentic Wallets** (launched Feb 11, 2026).
@@ -21,3 +22,7 @@ Agents can:
 **Status:** Early setup - contracts, tests, and integration coming soon.
 
 Built by @xkldrckx | Open to feedback / collabs.
+=======
+# base-agentfi
+Autonomous AI DeFi agents on Base using Coinbase Agentic Wallets – RWA management, yield optimization, liquidation protection
+>>>>>>> 57405685f346a7c2cf5146ce44c0272ddde32723
