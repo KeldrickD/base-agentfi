@@ -1,0 +1,16 @@
+{
+  "name": "Base AgentFi Dashboard",
+  "short_name": "AgentFi",
+  "description": "Autonomous RWA DeFi agent dashboard on Base Sepolia",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#071217",
+  "theme_color": "#22c55e",
+  "icons": [
+    {
+      "src": "/next.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "name": "agent-scripts",
+  "version": "1.0.0",
+  "description": "Offchain Coinbase Agentic Wallet runner for Base AgentFi",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dry-run": "set DRY_RUN=true&& node index.js"
+  },
+  "keywords": [
+    "base",
+    "agentic-wallets",
+    "defi",
+    "rwa"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "child_process": "^1.0.2",
+    "dotenv": "^17.3.1",
+    "ethers": "^6.16.0"
+  }
+}
