@@ -19,6 +19,30 @@ const STRATEGY_OWNER = (
   "0x96febBA52Da1aCD9275f57dE10B39F852D83C945"
 ).toLowerCase();
 
+const vaultReadAbi = [
+  {
+    type: "function",
+    stateMutability: "view",
+    name: "totalSupply",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    stateMutability: "view",
+    name: "balanceOf",
+    inputs: [{ name: "account", type: "address" }],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    stateMutability: "view",
+    name: "earnedFees",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+] as const;
+
 const erc20Abi = [
   {
     type: "function",
@@ -26,6 +50,16 @@ const erc20Abi = [
     stateMutability: "nonpayable",
     inputs: [
       { name: "spender", type: "address" },
+      { name: "value", type: "uint256" },
+    ],
+    outputs: [{ name: "", type: "bool" }],
+  },
+  {
+    type: "function",
+    name: "transfer",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "to", type: "address" },
       { name: "value", type: "uint256" },
     ],
     outputs: [{ name: "", type: "bool" }],
@@ -39,6 +73,13 @@ const strategyActionAbi = [
     name: "deposit",
     inputs: [{ name: "amount", type: "uint256" }],
     outputs: [],
+  },
+  {
+    type: "function",
+    stateMutability: "nonpayable",
+    name: "withdraw",
+    inputs: [{ name: "shares", type: "uint256" }],
+    outputs: [{ name: "assets", type: "uint256" }],
   },
   {
     type: "function",
@@ -101,6 +142,7 @@ export default function Home() {
   const [depositAmount, setDepositAmount] = useState("1");
   const [yieldAmount, setYieldAmount] = useState("10");
   const [agents, setAgents] = useState<AgentInfo[]>([]);
+  const [recentDepositors, setRecentDepositors] = useState<string[]>([]);
 
   const { data: nextAgentId } = useReadContract({
     abi: registryAbi,
@@ -130,6 +172,28 @@ export default function Home() {
     query: { refetchInterval: 6_000 },
   });
 
+  const { data: vaultSupply } = useReadContract({
+    abi: vaultReadAbi,
+    address: deployedAddresses.strategy,
+    functionName: "totalSupply",
+    query: { refetchInterval: 6_000 },
+  });
+
+  const { data: earnedFees } = useReadContract({
+    abi: vaultReadAbi,
+    address: deployedAddresses.strategy,
+    functionName: "earnedFees",
+    query: { refetchInterval: 6_000 },
+  });
+
+  const { data: yourVaultShares } = useReadContract({
+    abi: vaultReadAbi,
+    address: deployedAddresses.strategy,
+    functionName: "balanceOf",
+    args: [address || "0x0000000000000000000000000000000000000000"],
+    query: { refetchInterval: 6_000, enabled: Boolean(address) },
+  });
+
   const healthFactorFloat = useMemo(() => {
     if (!healthFactor) return 0;
     return Number(formatUnits(healthFactor, 18));
@@ -139,8 +203,9 @@ export default function Home() {
   const pendingFloat = Number(formatUnits(pendingYield ?? 0n, 6));
   const animatedHealth = useAnimatedNumber(healthFactorFloat);
   const animatedManaged = useAnimatedNumber(managedFloat);
-  const animatedPending = useAnimatedNumber(pendingFloat);
+  const animatedFees = useAnimatedNumber(Number(formatUnits(earnedFees ?? 0n, 6)));
   const onWrongChain = chainId !== BASE_SEPOLIA_CHAIN_ID;
+  const isOwner = address?.toLowerCase() === STRATEGY_OWNER;
 
   const healthRing = useMemo(() => {
     const normalized = Math.max(0, Math.min(2.0, healthFactorFloat));
@@ -159,6 +224,12 @@ export default function Home() {
   const chartMax = Math.max(1, managedFloat, pendingFloat);
   const managedBar = Math.max(8, (managedFloat / chartMax) * 100);
   const pendingBar = Math.max(8, (pendingFloat / chartMax) * 100);
+  const yourSharesFloat = Number(formatUnits(yourVaultShares ?? 0n, 6));
+  const yourEstimatedAssets =
+    vaultSupply && vaultSupply > 0n
+      ? (yourVaultShares ?? 0n) * (totalManagedAssets ?? 0n) / vaultSupply
+      : 0n;
+  const yourEstimatedAssetsFloat = Number(formatUnits(yourEstimatedAssets, 6));
 
   useEffect(() => {
     if (!address) return;
@@ -302,8 +373,43 @@ export default function Home() {
       });
       await waitForTx(hash);
       setStatus(`Deposit confirmed. Tx: ${hash}`);
+      if (address) {
+        setRecentDepositors((prev) => [address, ...prev.filter((v) => v !== address)].slice(0, 6));
+      }
     } catch (error) {
       setStatus(`Deposit failed: ${(error as Error).message}`);
+    } finally {
+      setActiveAction("");
+    }
+  }
+
+  async function withdrawVault() {
+    if (!isConnected || !address) {
+      setStatus("Connect wallet before withdrawing.");
+      return;
+    }
+    if (onWrongChain) {
+      setStatus("Switch wallet network to Base Sepolia (84532).");
+      return;
+    }
+    if (!yourVaultShares || yourVaultShares === 0n) {
+      setStatus("No vault shares available to withdraw.");
+      return;
+    }
+
+    try {
+      setActiveAction("withdraw");
+      setStatus("Submitting vault withdrawal...");
+      const hash = await writeContractAsync({
+        address: deployedAddresses.strategy,
+        abi: strategyActionAbi,
+        functionName: "withdraw",
+        args: [yourVaultShares],
+      });
+      await waitForTx(hash);
+      setStatus(`Withdraw confirmed. Tx: ${hash}`);
+    } catch (error) {
+      setStatus(`Withdraw failed: ${(error as Error).message}`);
     } finally {
       setActiveAction("");
     }
@@ -326,15 +432,24 @@ export default function Home() {
 
     try {
       setActiveAction("yield");
-      setStatus("Reporting yield to strategy...");
-      const hash = await writeContractAsync({
+      setStatus("Step 1/2: Funding strategy with USDC...");
+      const fundHash = await writeContractAsync({
+        address: deployedAddresses.asset,
+        abi: erc20Abi,
+        functionName: "transfer",
+        args: [deployedAddresses.strategy, amount],
+      });
+      await waitForTx(fundHash);
+
+      setStatus("Step 2/2: Reporting yield to strategy...");
+      const reportHash = await writeContractAsync({
         address: deployedAddresses.strategy,
         abi: strategyActionAbi,
         functionName: "reportYield",
         args: [amount],
       });
-      await waitForTx(hash);
-      setStatus(`Yield reported. Tx: ${hash}`);
+      await waitForTx(reportHash);
+      setStatus(`Yield funded + reported. Fund Tx: ${fundHash} | Report Tx: ${reportHash}`);
     } catch (error) {
       setStatus(`Report yield failed: ${(error as Error).message}`);
     } finally {
@@ -393,7 +508,7 @@ export default function Home() {
           </div>
           <p className="text-sm text-muted">Base Sepolia • Chain 84532</p>
           <h1 className="text-3xl font-semibold tracking-tight text-white md:text-4xl">
-            AgentFi Control Center
+            AgentFi Yield Vault
           </h1>
           <p className="mt-2 max-w-3xl text-sm text-muted">
             Coinbase-style autonomous DeFi agents for RWA strategy management.
@@ -459,15 +574,17 @@ export default function Home() {
         </div>
 
         <div className="card glass-card p-5">
-          <p className="metric-label">Total Managed Assets</p>
+          <p className="metric-label">Total TVL</p>
           <p className="metric-value mt-4">{animatedManaged.toLocaleString(undefined, { maximumFractionDigits: 2 })}</p>
           <p className="metric-sub">USDC</p>
         </div>
 
         <div className="card glass-card p-5">
-          <p className="metric-label">Pending Yield</p>
-          <p className="metric-value mt-4">{animatedPending.toLocaleString(undefined, { maximumFractionDigits: 2 })}</p>
-          <p className="metric-sub">USDC ready to compound</p>
+          <p className="metric-label">Your Earned Fees</p>
+          <p className="metric-value mt-4">
+            {(isOwner ? animatedFees : 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+          </p>
+          <p className="metric-sub">{isOwner ? "USDC earned by fee recipient" : "Connect fee-recipient wallet to claim view"}</p>
         </div>
       </section>
 
@@ -494,12 +611,15 @@ export default function Home() {
               </div>
             </div>
           </div>
+          <p className="mt-4 text-xs text-muted">
+            Agent runs fully autonomously every hour via Chainlink Automation.
+          </p>
         </div>
 
         <div className="card glass-card p-5">
           <div className="flex items-center justify-between">
-            <p className="metric-label">⚡ Quick Liquidity Action</p>
-            <span className="text-xs text-muted">Approve + Deposit</span>
+            <p className="metric-label">🏦 Deposit to Public Vault</p>
+            <span className="text-xs text-muted">Vault shares mint 1:1 at launch</span>
           </div>
           <label className="mt-3 block text-xs text-muted">
             USDC Amount
@@ -525,7 +645,18 @@ export default function Home() {
               disabled={isWritePending || activeAction === "deposit"}
               onClick={depositUsdc}
             >
-              {activeAction === "deposit" ? "Depositing..." : "Deposit"}
+              {activeAction === "deposit" ? "Depositing..." : "Deposit to Vault"}
+            </button>
+          </div>
+          <div className="mt-3 rounded-lg border border-white/12 bg-black/20 p-3 text-xs text-muted">
+            <p>Your Vault Shares: {yourSharesFloat.toLocaleString(undefined, { maximumFractionDigits: 3 })}</p>
+            <p className="mt-1">Estimated Assets: {yourEstimatedAssetsFloat.toLocaleString(undefined, { maximumFractionDigits: 3 })} USDC</p>
+            <button
+              className="primary-btn mt-3 w-full"
+              disabled={isWritePending || activeAction === "withdraw" || !yourVaultShares || yourVaultShares === 0n}
+              onClick={withdrawVault}
+            >
+              {activeAction === "withdraw" ? "Withdrawing..." : "Withdraw Your Vault Position"}
             </button>
           </div>
         </div>
@@ -577,7 +708,7 @@ export default function Home() {
         </div>
 
         <div className="card glass-card p-6">
-          <h2 className="text-lg font-semibold text-white">Report Yield (Owner)</h2>
+          <h2 className="text-lg font-semibold text-white">Report Yield (Demo)</h2>
           <p className="mt-1 text-sm text-muted">
             Seed strategy yield for automation demos.
           </p>
@@ -599,12 +730,12 @@ export default function Home() {
             className="primary-btn mt-3 w-full"
             disabled={isWritePending || activeAction === "yield"}
             onClick={reportYield}
-            title="Report yield to strategy"
+            title="Transfer USDC to strategy and report yield"
           >
-            {activeAction === "yield" ? "Reporting..." : "Report Yield"}
+            {activeAction === "yield" ? "Processing..." : "Fund + Report Yield"}
           </button>
           <p className="mt-2 text-xs text-amber-300">
-            Demo note: Owner-only in production.
+            Demo note: Transfers USDC into strategy before reporting yield.
           </p>
         </div>
 
@@ -616,7 +747,7 @@ export default function Home() {
               onClick={runAgentNow}
               disabled={isWritePending || activeAction === "upkeep"}
             >
-              {activeAction === "upkeep" ? "Running..." : "Run Agent Now"}
+              {activeAction === "upkeep" ? "Running..." : "Trigger Autonomous Compound"}
             </button>
           </div>
 
@@ -651,6 +782,21 @@ export default function Home() {
                   </p>
                 </div>
               ))
+            )}
+          </div>
+
+          <div className="mt-4 rounded-lg border border-white/12 bg-black/20 p-3">
+            <p className="text-xs uppercase tracking-wider text-muted">Recent Depositors (session)</p>
+            {recentDepositors.length === 0 ? (
+              <p className="mt-2 text-xs text-muted">No depositor activity yet in this browser session.</p>
+            ) : (
+              <div className="mt-2 flex flex-wrap gap-2">
+                {recentDepositors.map((depositor) => (
+                  <span key={depositor} className="rounded-full border border-white/15 px-2 py-1 text-xs text-white">
+                    {shortAddress(depositor)}
+                  </span>
+                ))}
+              </div>
             )}
           </div>
         </div>

@@ -1,8 +1,8 @@
 export const deployedAddresses = {
   registry: (process.env.NEXT_PUBLIC_REGISTRY_ADDRESS ||
-    "0xaB2c67381CD98F134F79C9E725dd13b97dd9C8Da") as `0x${string}`,
+    "0x0D6f7EB6022b8481C731dD3634f39E60CCCDFe5e") as `0x${string}`,
   strategy: (process.env.NEXT_PUBLIC_STRATEGY_ADDRESS ||
-    "0x1c8f5f6c3897C8b0Bc29F978cdd14cC689563247") as `0x${string}`,
+    "0x8465021569f116F845822a0781543cf04dc7b133") as `0x${string}`,
   asset: (process.env.NEXT_PUBLIC_USDC_ADDRESS ||
     "0x036CbD53842c5426634e7929541eC2318f3dCF7e") as `0x${string}`,
 };

@@ -5,7 +5,9 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "dry-run": "set DRY_RUN=true&& node index.js"
+    "dry-run": "set DRY_RUN=true&& node index.js",
+    "brain": "node brain.js",
+    "brain:dry-run": "set BRAIN_DRY_RUN=true&& node brain.js"
   },
   "keywords": [
     "base",
