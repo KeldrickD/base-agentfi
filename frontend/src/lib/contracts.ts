@@ -86,3 +86,14 @@ export const strategyAbi = [
     outputs: [],
   },
 ] as const;
+
+export const strategyEventsAbi = [
+  {
+    type: "event",
+    name: "FeeCollected",
+    inputs: [
+      { name: "recipient", type: "address", indexed: true },
+      { name: "amount", type: "uint256", indexed: false },
+    ],
+  },
+] as const;

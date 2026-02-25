@@ -11,7 +11,7 @@ import {
   useReadContract,
   useWriteContract,
 } from "wagmi";
-import { deployedAddresses, registryAbi, strategyAbi } from "@/lib/contracts";
+import { deployedAddresses, registryAbi, strategyAbi, strategyEventsAbi } from "@/lib/contracts";
 
 const BASE_SEPOLIA_CHAIN_ID = 84532;
 const STRATEGY_OWNER = (
@@ -143,6 +143,7 @@ export default function Home() {
   const [yieldAmount, setYieldAmount] = useState("10");
   const [agents, setAgents] = useState<AgentInfo[]>([]);
   const [recentDepositors, setRecentDepositors] = useState<string[]>([]);
+  const [earningsHistory, setEarningsHistory] = useState<{ amount: string; txHash: `0x${string}`; timestamp: number }[]>([]);
 
   const { data: nextAgentId } = useReadContract({
     abi: registryAbi,
@@ -266,6 +267,40 @@ export default function Home() {
     }
     loadAgents();
   }, [publicClient, nextAgentId]);
+
+  useEffect(() => {
+    async function loadEarnings() {
+      if (!publicClient || chainId !== BASE_SEPOLIA_CHAIN_ID) {
+        setEarningsHistory([]);
+        return;
+      }
+      try {
+        const block = await publicClient.getBlockNumber();
+        const fromBlock = block > 50_000n ? block - 50_000n : 0n;
+        const logs = await publicClient.getLogs({
+          address: deployedAddresses.strategy,
+          event: strategyEventsAbi[0],
+          fromBlock,
+          toBlock: "latest",
+        });
+        const last5 = logs.slice(-5).reverse();
+        const withTime: { amount: string; txHash: `0x${string}`; timestamp: number }[] = [];
+        for (const log of last5) {
+          const blockInfo = await publicClient.getBlock({ blockNumber: log.blockNumber });
+          const amount = log.args?.amount != null ? formatUnits(log.args.amount, 6) : "0";
+          withTime.push({
+            amount,
+            txHash: log.transactionHash ?? "0x",
+            timestamp: Number(blockInfo.timestamp),
+          });
+        }
+        setEarningsHistory(withTime);
+      } catch {
+        setEarningsHistory([]);
+      }
+    }
+    loadEarnings();
+  }, [publicClient, chainId, earnedFees]);
 
   function parseUsdcUnits(value: string) {
     const n = Number(value);
@@ -617,10 +652,11 @@ export default function Home() {
         </div>
 
         <div className="card glass-card p-5">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-2">
             <p className="metric-label">🏦 Deposit to Public Vault</p>
-            <span className="text-xs text-muted">Vault shares mint 1:1 at launch</span>
+            <span className="badge-public-vault">Public Vault — Anyone can deposit</span>
           </div>
+          <p className="mt-1 text-xs text-muted">Vault shares mint 1:1 at launch</p>
           <label className="mt-3 block text-xs text-muted">
             USDC Amount
             <input
@@ -635,17 +671,17 @@ export default function Home() {
           <div className="mt-3 grid grid-cols-2 gap-2">
             <button
               className="primary-btn"
-              disabled={isWritePending || activeAction === "approve"}
+              disabled={!!(isWritePending || activeAction)}
               onClick={approveUsdc}
             >
-              {activeAction === "approve" ? "Approving..." : "Approve USDC"}
+              {activeAction === "approve" ? "Approving…" : "Approve USDC"}
             </button>
             <button
               className="primary-btn"
-              disabled={isWritePending || activeAction === "deposit"}
+              disabled={!!(isWritePending || activeAction)}
               onClick={depositUsdc}
             >
-              {activeAction === "deposit" ? "Depositing..." : "Deposit to Vault"}
+              {activeAction === "deposit" ? "Depositing…" : "Deposit to Vault"}
             </button>
           </div>
           <div className="mt-3 rounded-lg border border-white/12 bg-black/20 p-3 text-xs text-muted">
@@ -653,10 +689,10 @@ export default function Home() {
             <p className="mt-1">Estimated Assets: {yourEstimatedAssetsFloat.toLocaleString(undefined, { maximumFractionDigits: 3 })} USDC</p>
             <button
               className="primary-btn mt-3 w-full"
-              disabled={isWritePending || activeAction === "withdraw" || !yourVaultShares || yourVaultShares === 0n}
+              disabled={!!(isWritePending || activeAction || !yourVaultShares || yourVaultShares === 0n)}
               onClick={withdrawVault}
             >
-              {activeAction === "withdraw" ? "Withdrawing..." : "Withdraw Your Vault Position"}
+              {activeAction === "withdraw" ? "Withdrawing…" : "Withdraw Your Vault Position"}
             </button>
           </div>
         </div>
@@ -699,45 +735,51 @@ export default function Home() {
 
             <button
               className="primary-btn mt-2 w-full"
-              disabled={isWritePending || activeAction === "mint"}
+              disabled={!!(isWritePending || activeAction)}
               onClick={createAgent}
             >
-              {activeAction === "mint" ? "Minting..." : "Mint Agent"}
+              {activeAction === "mint" ? "Minting…" : "Mint Agent"}
             </button>
           </div>
         </div>
 
-        <div className="card glass-card p-6">
-          <h2 className="text-lg font-semibold text-white">Report Yield (Demo)</h2>
-          <p className="mt-1 text-sm text-muted">
-            Seed strategy yield for automation demos.
-          </p>
-          <p className="mt-2 text-xs text-muted">
-            Owner required: {shortAddress(STRATEGY_OWNER)}
-          </p>
-          <label className="mt-3 block text-xs text-muted">
-            Yield Amount (USDC)
-            <input
-              className="form-input mt-1"
-              value={yieldAmount}
-              onChange={(e) => setYieldAmount(e.target.value)}
-              type="number"
-              min="0.01"
-              step="0.01"
-            />
-          </label>
-          <button
-            className="primary-btn mt-3 w-full"
-            disabled={isWritePending || activeAction === "yield"}
-            onClick={reportYield}
-            title="Transfer USDC to strategy and report yield"
-          >
-            {activeAction === "yield" ? "Processing..." : "Fund + Report Yield"}
-          </button>
-          <p className="mt-2 text-xs text-amber-300">
-            Demo note: Transfers USDC into strategy before reporting yield.
-          </p>
-        </div>
+        {isOwner ? (
+          <div className="card glass-card p-6">
+            <h2 className="text-lg font-semibold text-white">Report Yield (Demo)</h2>
+            <p className="mt-1 text-sm text-muted">
+              Seed strategy yield for automation demos.
+            </p>
+            <p className="mt-2 text-xs text-muted">
+              Owner required: {shortAddress(STRATEGY_OWNER)}
+            </p>
+            <label className="mt-3 block text-xs text-muted">
+              Yield Amount (USDC)
+              <input
+                className="form-input mt-1"
+                value={yieldAmount}
+                onChange={(e) => setYieldAmount(e.target.value)}
+                type="number"
+                min="0.01"
+                step="0.01"
+              />
+            </label>
+            <button
+              className="primary-btn mt-3 w-full"
+              disabled={!!(isWritePending || activeAction)}
+              onClick={reportYield}
+              title="Transfer USDC to strategy and report yield"
+            >
+              {activeAction === "yield" ? "Processing…" : "Fund + Report Yield"}
+            </button>
+            <p className="mt-2 text-xs text-amber-300">
+              Demo note: Transfers USDC into strategy before reporting yield.
+            </p>
+          </div>
+        ) : (
+          <div className="card glass-card p-6 flex flex-col justify-center">
+            <p className="owner-only-note">Owner-only feature • Connect fee-recipient wallet to access</p>
+          </div>
+        )}
 
         <div className="card glass-card p-6">
           <div className="flex items-center justify-between">
@@ -745,9 +787,9 @@ export default function Home() {
             <button
               className="primary-btn !w-auto px-4 py-2 text-xs"
               onClick={runAgentNow}
-              disabled={isWritePending || activeAction === "upkeep"}
+              disabled={!!(isWritePending || activeAction)}
             >
-              {activeAction === "upkeep" ? "Running..." : "Trigger Autonomous Compound"}
+              {activeAction === "upkeep" ? "Running…" : "Trigger Autonomous Compound"}
             </button>
           </div>
 
@@ -797,6 +839,48 @@ export default function Home() {
                   </span>
                 ))}
               </div>
+            )}
+          </div>
+        </div>
+      </section>
+
+      <section className="mt-6">
+        <div className="card glass-card p-6">
+          <h2 className="text-lg font-semibold text-white">Operator Earnings History</h2>
+          <p className="mt-1 text-sm text-muted">Last 5 FeeCollected events from the strategy.</p>
+          <div className="mt-4 overflow-x-auto">
+            {earningsHistory.length === 0 ? (
+              <p className="text-sm text-muted">No earnings yet.</p>
+            ) : (
+              <table className="earnings-table w-full text-left text-sm">
+                <thead>
+                  <tr>
+                    <th className="earnings-th">Amount (USDC)</th>
+                    <th className="earnings-th">Date</th>
+                    <th className="earnings-th">Tx</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {earningsHistory.map((row, i) => (
+                    <tr key={`${row.txHash}-${i}`}>
+                      <td className="earnings-td font-medium text-white">{row.amount}</td>
+                      <td className="earnings-td text-muted">
+                        {new Date(row.timestamp * 1000).toLocaleString()}
+                      </td>
+                      <td className="earnings-td">
+                        <a
+                          className="text-accent hover:underline"
+                          target="_blank"
+                          rel="noreferrer"
+                          href={`https://sepolia.basescan.org/tx/${row.txHash}`}
+                        >
+                          View
+                        </a>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             )}
           </div>
         </div>

@@ -150,3 +150,35 @@ body {
     transform: translateY(0) scale(1);
   }
 }
+
+.badge-public-vault {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #87a3ab;
+  white-space: nowrap;
+}
+
+.owner-only-note {
+  font-size: 0.8rem;
+  color: #87a3ab;
+  text-align: center;
+}
+
+.earnings-table {
+  border-collapse: collapse;
+}
+
+.earnings-th {
+  padding: 0.5rem 0.75rem;
+  font-weight: 600;
+  color: #87a3ab;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.earnings-td {
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
